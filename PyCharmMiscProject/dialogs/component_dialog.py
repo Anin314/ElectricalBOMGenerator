@@ -75,6 +75,9 @@ class ComponentDialog(BaseDialog):
         self.material_tree.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
 
+        # ** 关键：绑定双击编辑事件 **
+        self.material_tree.bind('<Double-1>', lambda e: self.edit_material())
+
         button_frame = ttk.Frame(material_frame)
         button_frame.grid(row=1, column=0, pady=5)
         ttk.Button(button_frame, text="添加材料", command=self.add_material).pack(side=tk.LEFT, padx=(0,5))
@@ -122,29 +125,37 @@ class ComponentDialog(BaseDialog):
 
     def import_from_library(self):
         from dialogs.electrical_lib_dialog import ElectricalLibraryDialog
+        from dialogs.quantity_assign_dialog import QuantityAssignDialog
         library = ElectricalLibrary()
 
-        def on_select(selected_elements_with_qty):
-            for part_number, quantity in selected_elements_with_qty:
+        def on_select(selected_part_numbers):
+            # selected_part_numbers 是选中的元件料号列表
+            for part_number in selected_part_numbers:
                 element = library.get_element(part_number)
                 if element:
-                    exists = False
-                    for item in self.material_tree.get_children():
-                        values = self.material_tree.item(item)["values"]
-                        if values[3] == part_number:
-                            # 累加数量默认加到预制板
-                            new_prefab = int(values[1]) + quantity
-                            self.material_tree.item(item, values=(
-                                element["name"], str(new_prefab), values[2],
+                    # 弹出数量分配对话框
+                    dlg = QuantityAssignDialog(self.dialog, element["name"], part_number)
+                    result = dlg.show()
+                    if result:
+                        prefab_qty, spare_qty = result
+                        # 检查是否已存在相同料号
+                        exists = False
+                        for item in self.material_tree.get_children():
+                            values = self.material_tree.item(item)["values"]
+                            if values[3] == part_number:
+                                new_prefab = int(values[1]) + prefab_qty
+                                new_spare = int(values[2]) + spare_qty
+                                self.material_tree.item(item, values=(
+                                    element["name"], str(new_prefab), str(new_spare),
+                                    part_number, element["specification"], "", ""
+                                ))
+                                exists = True
+                                break
+                        if not exists:
+                            self.material_tree.insert("", tk.END, values=(
+                                element["name"], str(prefab_qty), str(spare_qty),
                                 part_number, element["specification"], "", ""
                             ))
-                            exists = True
-                            break
-                    if not exists:
-                        self.material_tree.insert("", tk.END, values=(
-                            element["name"], str(quantity), "0",
-                            part_number, element["specification"], "", ""
-                        ))
 
         dialog = ElectricalLibraryDialog(self.dialog, library, callback_func=on_select, show_search=True)
 
@@ -214,90 +225,79 @@ class ComponentDialog(BaseDialog):
 
 
 class MaterialDialog(BaseDialog):
-    """材料对话框，支持预制板/零散件数量"""
+    """材料数量修改对话框，仅显示预制板/零散件数量"""
 
     def __init__(self, parent, material_data=None):
-        self.material_data = material_data
+        self.material_data = material_data  # 元组 (material, prefab, spare, part_number, spec, detailed_spec, notes)
         self.result = None
-        title = "编辑材料" if material_data else "添加材料"
-        super().__init__(parent, title, "500x280")
+        title = "修改数量" if material_data else "添加材料"
+        super().__init__(parent, title, "350x180")
 
     def setup_ui(self):
         main_frame = ttk.Frame(self.dialog, padding="10")
-        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        main_frame.pack(fill=tk.BOTH, expand=True)
 
-        ttk.Label(main_frame, text="材料名称:").grid(row=0, column=0, sticky=tk.W, pady=(0,5))
-        self.material_var = tk.StringVar()
-        ttk.Entry(main_frame, textvariable=self.material_var, width=30).grid(row=0, column=1, sticky=(tk.W, tk.E), pady=(0,5))
+        # 预制板数量
+        frame_prefab = ttk.Frame(main_frame)
+        frame_prefab.pack(fill=tk.X, pady=5)
+        ttk.Label(frame_prefab, text="预制板数量:").pack(side=tk.LEFT)
+        self.prefab_var = tk.StringVar()
+        spin_prefab = ttk.Spinbox(frame_prefab, from_=0, to=9999, textvariable=self.prefab_var, width=10)
+        spin_prefab.pack(side=tk.LEFT, padx=(10, 0))
 
-        ttk.Label(main_frame, text="预制板数量:").grid(row=1, column=0, sticky=tk.W, pady=(0,5))
-        self.prefab_qty_var = tk.StringVar()
-        ttk.Entry(main_frame, textvariable=self.prefab_qty_var, width=30).grid(row=1, column=1, sticky=(tk.W, tk.E), pady=(0,5))
+        # 零散件数量
+        frame_spare = ttk.Frame(main_frame)
+        frame_spare.pack(fill=tk.X, pady=5)
+        ttk.Label(frame_spare, text="零散件数量:").pack(side=tk.LEFT)
+        self.spare_var = tk.StringVar()
+        spin_spare = ttk.Spinbox(frame_spare, from_=0, to=9999, textvariable=self.spare_var, width=10)
+        spin_spare.pack(side=tk.LEFT, padx=(10, 0))
 
-        ttk.Label(main_frame, text="零散件数量:").grid(row=2, column=0, sticky=tk.W, pady=(0,5))
-        self.spare_qty_var = tk.StringVar()
-        ttk.Entry(main_frame, textvariable=self.spare_qty_var, width=30).grid(row=2, column=1, sticky=(tk.W, tk.E), pady=(0,5))
+        # 按钮
+        btn_frame = ttk.Frame(main_frame)
+        btn_frame.pack(pady=15)
+        ttk.Button(btn_frame, text="确定", command=self.confirm).pack(side=tk.LEFT, padx=(0, 15))
+        ttk.Button(btn_frame, text="取消", command=self.cancel).pack(side=tk.LEFT)
 
-        ttk.Label(main_frame, text="料号:").grid(row=3, column=0, sticky=tk.W, pady=(0,5))
-        self.part_number_var = tk.StringVar()
-        ttk.Entry(main_frame, textvariable=self.part_number_var, width=30).grid(row=3, column=1, sticky=(tk.W, tk.E), pady=(0,5))
-
-        ttk.Label(main_frame, text="规格型号:").grid(row=4, column=0, sticky=tk.W, pady=(0,5))
-        self.spec_var = tk.StringVar()
-        ttk.Entry(main_frame, textvariable=self.spec_var, width=30).grid(row=4, column=1, sticky=(tk.W, tk.E), pady=(0,5))
-
-        ttk.Label(main_frame, text="详细规格:").grid(row=5, column=0, sticky=tk.W, pady=(0,5))
-        self.detailed_spec_var = tk.StringVar()
-        ttk.Entry(main_frame, textvariable=self.detailed_spec_var, width=30).grid(row=5, column=1, sticky=(tk.W, tk.E), pady=(0,5))
-
-        ttk.Label(main_frame, text="备注:").grid(row=6, column=0, sticky=tk.W, pady=(0,5))
-        self.notes_var = tk.StringVar()
-        ttk.Entry(main_frame, textvariable=self.notes_var, width=30).grid(row=6, column=1, sticky=(tk.W, tk.E), pady=(0,10))
-
+        # 如果已有数据，填充当前数量
         if self.material_data:
-            self.material_var.set(self.material_data[0])
-            self.prefab_qty_var.set(self.material_data[1])
-            self.spare_qty_var.set(self.material_data[2])
-            self.part_number_var.set(self.material_data[3])
-            self.spec_var.set(self.material_data[4])
-            self.detailed_spec_var.set(self.material_data[5])
-            self.notes_var.set(self.material_data[6])
+            self.prefab_var.set(str(self.material_data[1]))
+            self.spare_var.set(str(self.material_data[2]))
+        else:
+            self.prefab_var.set("0")
+            self.spare_var.set("0")
 
-        button_frame = ttk.Frame(main_frame)
-        button_frame.grid(row=7, column=0, columnspan=2, pady=10)
-        ttk.Button(button_frame, text="确定", command=self.confirm).pack(side=tk.LEFT, padx=(0,10))
-        ttk.Button(button_frame, text="取消", command=self.cancel).pack(side=tk.LEFT)
-
-        self.dialog.columnconfigure(0, weight=1)
-        self.dialog.rowconfigure(0, weight=1)
-        main_frame.columnconfigure(1, weight=1)
+        # 绑定回车键
+        self.dialog.bind('<Return>', lambda e: self.confirm())
+        spin_prefab.focus_set()
 
     def confirm(self):
-        material = self.material_var.get().strip()
-        prefab_str = self.prefab_qty_var.get().strip()
-        spare_str = self.spare_qty_var.get().strip()
-        part_number = self.part_number_var.get().strip()
-        spec = self.spec_var.get().strip()
-        detailed_spec = self.detailed_spec_var.get().strip()
-        notes = self.notes_var.get().strip()
-
-        if not material:
-            messagebox.showerror("错误", "材料名称不能为空")
-            return
         try:
-            prefab = int(prefab_str) if prefab_str else 0
-            spare = int(spare_str) if spare_str else 0
+            prefab = int(self.prefab_var.get())
+            spare = int(self.spare_var.get())
             if prefab + spare <= 0:
                 messagebox.showerror("错误", "预制板数量和零散件数量不能同时为0")
                 return
         except ValueError:
-            messagebox.showerror("错误", "数量必须是整数")
+            messagebox.showerror("错误", "请输入有效的整数")
             return
 
-        self.result = (material, prefab, spare, part_number, spec, detailed_spec, notes)
+        # 返回新数量，同时保留其他原始字段（用于更新）
+        if self.material_data:
+            # 原有数据: (material, old_prefab, old_spare, part_number, spec, detailed_spec, notes)
+            # 返回 (material, new_prefab, new_spare, part_number, spec, detailed_spec, notes)
+            self.result = (
+                self.material_data[0], prefab, spare,
+                self.material_data[3], self.material_data[4],
+                self.material_data[5], self.material_data[6]
+            )
+        else:
+            # 添加新材料的情况（理论上不应通过此对话框添加新材料，但保留兼容）
+            self.result = ("", prefab, spare, "", "", "", "")
         self.dialog.destroy()
 
     def cancel(self):
+        self.result = None
         self.dialog.destroy()
 
     def show(self):

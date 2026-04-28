@@ -419,13 +419,65 @@ class MainView:
         if not file_path:
             return
         try:
-            # 物料明细
-            df_material = pd.DataFrame(bom_data, columns=["机架", "位置", "材料名称", "料号", "规格", "数量", "备注"])
+            # 1. 处理物料明细：合并相同机架+位置+料号的数量
+            # bom_data 格式：[(机架, 位置, 材料名称, 料号, 规格, 数量, 备注), ...]
+            # 先转换为DataFrame
+            df = pd.DataFrame(bom_data, columns=["机架", "位置", "材料名称", "料号", "规格", "数量", "备注"])
 
-            # 收集IO点
+            # 按机架、位置、料号、材料名称、规格、备注分组，合并数量
+            grouped = df.groupby(["机架", "位置", "料号", "材料名称", "规格", "备注"], as_index=False)["数量"].sum()
+
+            # 按机架、位置排序（确保预制板在前，零散件在后？可按位置自然顺序，但最好预制板在前）
+            # 定义位置顺序
+            position_order = {"预制板": 0, "零散件": 1}
+            grouped["位置排序"] = grouped["位置"].map(position_order)
+            grouped = grouped.sort_values(["机架", "位置排序", "料号"]).drop(columns=["位置排序"])
+
+            # 重新排列列顺序
+            df_material = grouped[["机架", "位置", "料号", "材料名称", "规格", "数量", "备注"]]
+
+            # 2. 写入物料明细到Excel（先不合并单元格）
+            with pd.ExcelWriter(file_path, engine='openpyxl') as writer:
+                df_material.to_excel(writer, sheet_name="物料明细", index=False)
+
+            # 3. 合并单元格（相同机架、相同位置的行合并）
+            from openpyxl import load_workbook
+            from openpyxl.styles import Alignment
+            wb = load_workbook(file_path)
+            ws = wb["物料明细"]
+
+            # 记录需要合并的起止行
+            merge_map = {}  # key: (机架, 位置) -> [start_row, end_row]
+            current_key = None
+            start_row = 2
+            for row in range(2, ws.max_row + 2):  # 多一行用于结束
+                rack = ws.cell(row=row, column=1).value if row <= ws.max_row else None
+                pos = ws.cell(row=row, column=2).value if row <= ws.max_row else None
+                key = (rack, pos)
+                if key != current_key:
+                    if current_key is not None:
+                        merge_map[current_key] = (start_row, row - 1)
+                    current_key = key
+                    start_row = row
+
+            # 执行合并
+            for (rack, pos), (s, e) in merge_map.items():
+                if s < e:
+                    ws.merge_cells(start_row=s, start_column=1, end_row=e, end_column=1)
+                    ws.merge_cells(start_row=s, start_column=2, end_row=e, end_column=2)
+                    # 居中
+                    ws.cell(row=s, column=1).alignment = Alignment(horizontal='center', vertical='center')
+                    ws.cell(row=s, column=2).alignment = Alignment(horizontal='center', vertical='center')
+
+            wb.save(file_path)
+
+            # 4. 收集IO点并生成IO分配表
             io_rows = []
             for rack in self.project_mgr.current_project["racks"]:
                 rack_name = rack["name"]
+                # 收集输入点和输出点（按顺序，先输入后输出）
+                input_names = []
+                output_names = []
                 for item in rack["items"]:
                     if item["type"] != "component":
                         continue
@@ -434,29 +486,33 @@ class MainView:
                         continue
                     io_points = comp["io_points"]
                     for instance in range(1, item["quantity"] + 1):
-                        for idx, name in enumerate(io_points.get("inputs", []), start=1):
-                            io_rows.append({
-                                "机架": rack_name,
-                                "组件": comp["name"],
-                                "实例序号": instance,
-                                "点类型": "输入",
-                                "点序号": idx,
-                                "点名称": name
-                            })
-                        for idx, name in enumerate(io_points.get("outputs", []), start=1):
-                            io_rows.append({
-                                "机架": rack_name,
-                                "组件": comp["name"],
-                                "实例序号": instance,
-                                "点类型": "输出",
-                                "点序号": idx,
-                                "点名称": name
-                            })
-            df_io = pd.DataFrame(io_rows) if io_rows else pd.DataFrame(columns=["机架", "组件", "实例序号", "点类型", "点序号", "点名称"])
+                        for name in io_points.get("inputs", []):
+                            full_name = f"{comp['name']}{instance}{name}"
+                            input_names.append(full_name)
+                        for name in io_points.get("outputs", []):
+                            full_name = f"{comp['name']}{instance}{name}"
+                            output_names.append(full_name)
 
-            with pd.ExcelWriter(file_path, engine='openpyxl') as writer:
-                df_material.to_excel(writer, sheet_name="物料明细", index=False)
+                # 生成带序号的点名称
+                for idx, name in enumerate(input_names, start=1):
+                    io_rows.append({
+                        "机架": rack_name,
+                        "点类型": "输入",
+                        "点名称": f"{idx} {name}"
+                    })
+                for idx, name in enumerate(output_names, start=1):
+                    io_rows.append({
+                        "机架": rack_name,
+                        "点类型": "输出",
+                        "点名称": f"{idx} {name}"
+                    })
+
+            df_io = pd.DataFrame(io_rows) if io_rows else pd.DataFrame(columns=["机架", "点类型", "点名称"])
+
+            # 将IO表追加到同一个Excel文件
+            with pd.ExcelWriter(file_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
                 df_io.to_excel(writer, sheet_name="IO分配表", index=False)
+
             messagebox.showinfo("成功", f"BOM已导出到: {file_path}")
         except Exception as e:
             messagebox.showerror("错误", f"导出失败: {str(e)}")
