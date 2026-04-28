@@ -322,7 +322,7 @@ class MainView:
         self.refresh_component_list()
 
     def manage_electrical_lib(self):
-        dialog = ElectricalLibraryDialog(self.root, self.electrical_lib)
+        dialog = ElectricalLibraryDialog(self.root, self.electrical_lib, quantity_mode=False)
         self.root.wait_window(dialog.dialog)
         self.filter_elements()
 
@@ -475,7 +475,6 @@ class MainView:
             io_rows = []
             for rack in self.project_mgr.current_project["racks"]:
                 rack_name = rack["name"]
-                # 收集输入点和输出点（按顺序，先输入后输出）
                 input_names = []
                 output_names = []
                 for item in rack["items"]:
@@ -492,23 +491,11 @@ class MainView:
                         for name in io_points.get("outputs", []):
                             full_name = f"{comp['name']}{instance}{name}"
                             output_names.append(full_name)
-
-                # 生成带序号的点名称
                 for idx, name in enumerate(input_names, start=1):
-                    io_rows.append({
-                        "机架": rack_name,
-                        "点类型": "输入",
-                        "点名称": f"{idx} {name}"
-                    })
+                    io_rows.append({"机架": rack_name, "点类型": "输入", "序号": idx, "点名称": name})
                 for idx, name in enumerate(output_names, start=1):
-                    io_rows.append({
-                        "机架": rack_name,
-                        "点类型": "输出",
-                        "点名称": f"{idx} {name}"
-                    })
-
-            df_io = pd.DataFrame(io_rows) if io_rows else pd.DataFrame(columns=["机架", "点类型", "点名称"])
-
+                    io_rows.append({"机架": rack_name, "点类型": "输出", "序号": idx, "点名称": name})
+            df_io = pd.DataFrame(io_rows) if io_rows else pd.DataFrame(columns=["机架", "点类型", "序号", "点名称"])
             # 将IO表追加到同一个Excel文件
             with pd.ExcelWriter(file_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
                 df_io.to_excel(writer, sheet_name="IO分配表", index=False)

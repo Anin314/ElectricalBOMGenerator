@@ -1,5 +1,6 @@
 # dialogs/electrical_lib_dialog.py
 from dialogs.base_dialog import BaseDialog
+from dialogs.quantity_assign_dialog import QuantityAssignDialog
 from tkinter import ttk, messagebox, filedialog
 import tkinter as tk
 import pandas as pd
@@ -8,8 +9,6 @@ from models.component_db import ComponentDatabase
 
 
 class ElementDialog(BaseDialog):
-    """元件编辑对话框（仅物料信息，无数量）"""
-
     def __init__(self, parent, element_data=None):
         self.element_data = element_data
         self.result = None
@@ -69,13 +68,13 @@ class ElementDialog(BaseDialog):
 
 
 class ElectricalLibraryDialog(BaseDialog):
-    """电气元件库管理对话框（无数量属性，支持多选，双击编辑）"""
-
-    def __init__(self, parent, library, callback_func=None, show_search=True):
+    def __init__(self, parent, library, callback_func=None, show_search=True, quantity_mode=False):
         self.library = library
         self.callback_func = callback_func
         self.show_search = show_search
         self.search_term = ""
+        self.quantity_mode = quantity_mode
+        self.temp_quantities = {}
         super().__init__(parent, "电气元件库管理", "900x600")
 
     def setup_ui(self):
@@ -103,23 +102,32 @@ class ElectricalLibraryDialog(BaseDialog):
         ttk.Button(button_frame, text="导入Excel", command=self.import_excel).pack(side=tk.LEFT, padx=(0, 5))
         ttk.Button(button_frame, text="导出Excel", command=self.export_excel).pack(side=tk.LEFT)
 
-        columns = ("part_number", "name", "specification", "added_time", "replaced_by")
+        if self.quantity_mode:
+            columns = ("part_number", "name", "specification", "added_time", "replaced_by", "quantity")
+        else:
+            columns = ("part_number", "name", "specification", "added_time", "replaced_by")
+
         self.tree = ttk.Treeview(main_frame, columns=columns, show="headings", height=15, selectmode='extended')
         self.tree.heading("part_number", text="物料编码")
         self.tree.heading("name", text="物料名称")
         self.tree.heading("specification", text="规格")
         self.tree.heading("added_time", text="添加时间")
         self.tree.heading("replaced_by", text="替换为")
-        for col in columns:
-            self.tree.column(col, width=120)
+        if self.quantity_mode:
+            self.tree.heading("quantity", text="数量")
+            self.tree.column("quantity", width=100)
+
+        self.tree.column("part_number", width=120)
         self.tree.column("name", width=150)
+        self.tree.column("specification", width=120)
+        self.tree.column("added_time", width=120)
+        self.tree.column("replaced_by", width=120)
 
         scrollbar = ttk.Scrollbar(main_frame, orient=tk.VERTICAL, command=self.tree.yview)
         self.tree.configure(yscrollcommand=scrollbar.set)
         self.tree.grid(row=2, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         scrollbar.grid(row=2, column=1, sticky=(tk.N, tk.S))
 
-        # 双击编辑元件（而不是数量分配）
         self.tree.bind('<Double-1>', self.on_double_click)
 
         button_frame_bottom = ttk.Frame(main_frame)
@@ -141,33 +149,64 @@ class ElectricalLibraryDialog(BaseDialog):
             include_replaced=self.include_replaced_var.get()
         )
         for element in elements:
-            self.tree.insert("", tk.END, values=(
+            base = [
                 element['part_number'],
                 element['name'],
                 element['specification'],
                 element['added_time'].split('.')[0] if element['added_time'] else '',
                 element['replaced_by'] or ''
-            ))
+            ]
+            if self.quantity_mode:
+                qty = self.temp_quantities.get(element['part_number'], (0, 0))
+                qty_text = f"预制:{qty[0]} 零散:{qty[1]}"
+                self.tree.insert("", tk.END, values=base + [qty_text])
+            else:
+                self.tree.insert("", tk.END, values=base)
 
     def on_search_change(self, *args):
         self.search_term = self.search_var.get()
         self.refresh_list()
 
     def on_double_click(self, event):
-        """双击编辑元件"""
-        self.edit_element()
+        if self.quantity_mode:
+            self._assign_quantity()
+        else:
+            self.edit_element()
+
+    def _assign_quantity(self):
+        selection = self.tree.selection()
+        if not selection:
+            return
+        item = self.tree.item(selection[0])
+        part_number = str(item["values"][0])   # 确保字符串
+        element = self.library.get_element(part_number)
+        if not element:
+            return
+        current = self.temp_quantities.get(part_number, (0, 0))
+        dlg = QuantityAssignDialog(self.dialog, element["name"], part_number,
+                                   default_prefab=current[0], default_spare=current[1])
+        result = dlg.show()
+        if result:
+            prefab, spare = result
+            self.temp_quantities[part_number] = (prefab, spare)
+            self.refresh_list()
 
     def confirm_selection(self):
-        """返回选中的元件编号列表（无数量）"""
-        selected = self.tree.selection()
-        selected_parts = [self.tree.item(item)["values"][0] for item in selected]
-        if self.callback_func:
-            self.callback_func(selected_parts)
+        if self.quantity_mode:
+            # 确保键转换为字符串
+            selected = [(str(pn), pq, sq) for pn, (pq, sq) in self.temp_quantities.items() if pq > 0 or sq > 0]
+            if self.callback_func:
+                self.callback_func(selected)
+        else:
+            selected_items = self.tree.selection()
+            selected_parts = [str(self.tree.item(item)["values"][0]) for item in selected_items]
+            if self.callback_func:
+                self.callback_func(selected_parts)
         self.dialog.destroy()
 
     def cancel(self):
         if self.callback_func:
-            self.callback_func([])
+            self.callback_func([] if not self.quantity_mode else [])
         self.dialog.destroy()
 
     def add_element(self):
@@ -211,6 +250,8 @@ class ElectricalLibraryDialog(BaseDialog):
             return
         if messagebox.askyesno("确认", f"确定要删除物料编码 '{part_number}' 吗？"):
             self.library.delete_element(part_number)
+            if part_number in self.temp_quantities:
+                del self.temp_quantities[part_number]
             self.refresh_list()
 
     def reverse_lookup(self):
@@ -246,7 +287,10 @@ class ElectricalLibraryDialog(BaseDialog):
             messagebox.showinfo("成功", f"元件 '{old_part_number}' 已替换为 '{new_part_number}' 并更新了所有相关组件")
 
     def import_excel(self):
-        file_path = filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx"), ("CSV files", "*.csv")])
+        file_path = filedialog.askopenfilename(
+            title="导入电气元件库",
+            filetypes=[("Excel files", "*.xlsx"), ("CSV files", "*.csv"), ("All files", "*.*")]
+        )
         if file_path:
             try:
                 df = pd.read_excel(file_path) if file_path.endswith('.xlsx') else pd.read_csv(file_path)
@@ -264,17 +308,23 @@ class ElectricalLibraryDialog(BaseDialog):
                 messagebox.showerror("错误", f"导入失败: {str(e)}")
 
     def export_excel(self):
-        file_path = filedialog.asksaveasfilename(defaultextension=".xlsx", filetypes=[("Excel files", "*.xlsx")])
+        file_path = filedialog.asksaveasfilename(
+            title="导出电气元件库",
+            defaultextension=".xlsx",
+            filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")]
+        )
         if file_path:
             try:
                 elements = self.library.get_all_elements(include_replaced=True)
-                data = [{
-                    "物料编码": e['part_number'],
-                    "物料名称": e['name'],
-                    "规格": e['specification'],
-                    "添加时间": e['added_time'],
-                    "替换为": e['replaced_by'] or ""
-                } for e in elements]
+                data = []
+                for e in elements:
+                    data.append({
+                        "物料编码": e['part_number'],
+                        "物料名称": e['name'],
+                        "规格": e['specification'],
+                        "添加时间": e['added_time'],
+                        "替换为": e['replaced_by'] or ""
+                    })
                 pd.DataFrame(data).to_excel(file_path, index=False)
                 messagebox.showinfo("成功", "电气元件库导出成功")
             except Exception as e:
