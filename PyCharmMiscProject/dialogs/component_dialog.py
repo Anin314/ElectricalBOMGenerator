@@ -122,41 +122,32 @@ class ComponentDialog(BaseDialog):
 
     def import_from_library(self):
         from dialogs.electrical_lib_dialog import ElectricalLibraryDialog
-        from dialogs.quantity_assign_dialog import QuantityAssignDialog
         library = ElectricalLibrary()
 
         def on_select(selected_elements_with_qty):
-            # selected_elements_with_qty 格式为 [(part_number, quantity), ...]
-            # 忽略 quantity，改为弹出对话框让用户分别输入两个数量
-            for part_number, _ in selected_elements_with_qty:
+            for part_number, quantity in selected_elements_with_qty:
                 element = library.get_element(part_number)
                 if element:
-                    # 弹出数量分配对话框
-                    dlg = QuantityAssignDialog(self.dialog, element["name"], part_number)
-                    result = dlg.show()
-                    if result:
-                        prefab_qty, spare_qty = result
-                        # 检查是否已存在相同料号
-                        exists = False
-                        for item in self.material_tree.get_children():
-                            values = self.material_tree.item(item)["values"]
-                            if values[3] == part_number:  # 料号列索引为3
-                                # 累加数量
-                                new_prefab = int(values[1]) + prefab_qty
-                                new_spare = int(values[2]) + spare_qty
-                                self.material_tree.item(item, values=(
-                                    element["name"], str(new_prefab), str(new_spare),
-                                    part_number, element["specification"], "", ""
-                                ))
-                                exists = True
-                                break
-                        if not exists:
-                            self.material_tree.insert("", tk.END, values=(
-                                element["name"], str(prefab_qty), str(spare_qty),
+                    exists = False
+                    for item in self.material_tree.get_children():
+                        values = self.material_tree.item(item)["values"]
+                        if values[3] == part_number:
+                            # 累加数量默认加到预制板
+                            new_prefab = int(values[1]) + quantity
+                            self.material_tree.item(item, values=(
+                                element["name"], str(new_prefab), values[2],
                                 part_number, element["specification"], "", ""
                             ))
+                            exists = True
+                            break
+                    if not exists:
+                        self.material_tree.insert("", tk.END, values=(
+                            element["name"], str(quantity), "0",
+                            part_number, element["specification"], "", ""
+                        ))
 
         dialog = ElectricalLibraryDialog(self.dialog, library, callback_func=on_select, show_search=True)
+
     def edit_material(self):
         selection = self.material_tree.selection()
         if not selection:
