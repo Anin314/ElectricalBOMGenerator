@@ -1,0 +1,26 @@
+{
+  "机头": {
+    "electrical_parts": [
+      {
+        "material": "压力基板",
+        "quantity": 1,
+        "specification": "",
+        "notes": ""
+      },
+      {
+        "material": "继电器",
+        "quantity": 1,
+        "specification": "",
+        "notes": ""
+      },
+      {
+        "material": "信号放大器",
+        "quantity": 1,
+        "specification": "",
+        "notes": ""
+      }
+    ],
+    "created_time": "2026-04-27T09:01:24.012955",
+    "id": "375b63f0-bc1e-4cd0-896f-df238ac15e0b"
+  }
+}
