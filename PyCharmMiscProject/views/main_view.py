@@ -25,6 +25,7 @@ class MainView:
         self.setup_ui()
         self.refresh_component_list()
         self.refresh_rack_display()
+        self.filter_elements()
 
     def setup_ui(self):
         main_frame = ttk.Frame(self.root, padding="10")
@@ -94,11 +95,15 @@ class MainView:
         self.elem_search_var.trace('w', self.filter_elements)
         ttk.Entry(search_elem_frame, textvariable=self.elem_search_var, width=20).pack(side=tk.LEFT, padx=(5, 0))
 
-        self.elem_tree = ttk.Treeview(elem_tab, columns=("part_number", "name"), show="headings", height=20)
+        self.elem_tree = ttk.Treeview(elem_tab, columns=("part_number", "name", "specification"), show="headings",
+                                      height=20)
         self.elem_tree.heading("part_number", text="物料编码")
         self.elem_tree.heading("name", text="物料名称")
+        self.elem_tree.heading("specification", text="规格")
         self.elem_tree.column("part_number", width=120)
-        self.elem_tree.column("name", width=200)
+        self.elem_tree.column("name", width=150)
+        self.elem_tree.column("specification", width=150)
+
         scroll_elem = ttk.Scrollbar(elem_tab, orient=tk.VERTICAL, command=self.elem_tree.yview)
         self.elem_tree.configure(yscrollcommand=scroll_elem.set)
         self.elem_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -173,7 +178,7 @@ class MainView:
         search = self.elem_search_var.get()
         elements = self.electrical_lib.get_all_elements(search_term=search, include_replaced=True)
         for e in elements:
-            self.elem_tree.insert("", tk.END, values=(e["part_number"], e["name"]))
+            self.elem_tree.insert("", tk.END, values=(e["part_number"], e["name"], e["specification"]))
 
     def refresh_rack_display(self):
         self.rack_tree.delete(*self.rack_tree.get_children())
