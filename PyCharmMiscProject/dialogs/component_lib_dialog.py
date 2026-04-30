@@ -7,7 +7,7 @@ from models.component_db import ComponentDatabase
 
 
 class ComponentLibraryDialog(BaseDialog):
-    """组件库管理对话框"""
+    """组件库管理对话框，支持双击编辑"""
 
     def __init__(self, parent, component_db):
         self.component_db = component_db
@@ -20,18 +20,17 @@ class ComponentLibraryDialog(BaseDialog):
 
         # 搜索框
         search_frame = ttk.Frame(main_frame)
-        search_frame.grid(row=0, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0,10))
+        search_frame.grid(row=0, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 10))
         ttk.Label(search_frame, text="搜索:").pack(side=tk.LEFT)
         self.search_var = tk.StringVar()
         self.search_var.trace('w', self.on_search)
-        ttk.Entry(search_frame, textvariable=self.search_var, width=30).pack(side=tk.LEFT, padx=(5,0))
+        ttk.Entry(search_frame, textvariable=self.search_var, width=30).pack(side=tk.LEFT, padx=(5, 0))
 
         # 操作按钮
         btn_frame = ttk.Frame(main_frame)
-        btn_frame.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0,10))
-        ttk.Button(btn_frame, text="添加组件", command=self.add_component).pack(side=tk.LEFT, padx=(0,5))
-        ttk.Button(btn_frame, text="编辑选中", command=self.edit_component).pack(side=tk.LEFT, padx=(0,5))
-        ttk.Button(btn_frame, text="删除选中", command=self.delete_component).pack(side=tk.LEFT)
+        btn_frame.grid(row=1, column=0, columnspan=2, pady=5)
+        ttk.Button(btn_frame, text="添加组件", command=self.add_component).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="刷新列表", command=self.refresh_list).pack(side=tk.LEFT, padx=5)
 
         # 组件列表
         self.tree = ttk.Treeview(main_frame, columns=("name",), show="headings", height=15)
@@ -42,7 +41,15 @@ class ComponentLibraryDialog(BaseDialog):
         self.tree.grid(row=2, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         scrollbar.grid(row=2, column=1, sticky=(tk.N, tk.S))
 
-        # 关闭按钮
+        # 双击编辑
+        self.tree.bind('<Double-1>', self.on_double_click)
+
+        # 右键菜单（可选）
+        self.context_menu = tk.Menu(self.dialog, tearoff=0)
+        self.context_menu.add_command(label="编辑", command=self.edit_component)
+        self.context_menu.add_command(label="删除", command=self.delete_component)
+        self.tree.bind('<Button-3>', self.show_context_menu)
+
         close_btn = ttk.Button(main_frame, text="关闭", command=self.dialog.destroy)
         close_btn.grid(row=3, column=0, pady=10)
 
@@ -62,6 +69,15 @@ class ComponentLibraryDialog(BaseDialog):
     def on_search(self, *args):
         self.search_term = self.search_var.get()
         self.refresh_list()
+
+    def on_double_click(self, event):
+        self.edit_component()
+
+    def show_context_menu(self, event):
+        item = self.tree.identify_row(event.y)
+        if item:
+            self.tree.selection_set(item)
+            self.context_menu.post(event.x_root, event.y_root)
 
     def add_component(self):
         dialog = ComponentDialog(self.dialog, self.component_db, mode='add')

@@ -57,13 +57,13 @@ class ProjectManager:
         self.current_project["racks"][rack_index]["name"] = new_name
 
     def add_item_to_rack(self, rack_index, item_type, item_id, quantity):
-        """添加条目到机架，不需要 placement"""
-        item = {
-            "type": item_type,
-            "id": item_id,
-            "quantity": quantity
-        }
-        self.current_project["racks"][rack_index]["items"].append(item)
+        """添加条目到机架，如果已存在相同类型和id，则累加数量"""
+        items = self.current_project["racks"][rack_index]["items"]
+        for item in items:
+            if item["type"] == item_type and item["id"] == item_id:
+                item["quantity"] += quantity
+                return
+        items.append({"type": item_type, "id": item_id, "quantity": quantity})
 
     def remove_item_from_rack(self, rack_index, item_index):
         del self.current_project["racks"][rack_index]["items"][item_index]
